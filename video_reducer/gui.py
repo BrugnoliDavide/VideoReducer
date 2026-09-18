@@ -1,3 +1,5 @@
+import base64
+import platform
 import threading
 from pathlib import Path
 
@@ -30,7 +32,22 @@ class VideoReducerGUI(tk.Tk):
         self.geometry("1000x700")
         self.minsize(800, 500)
         self.state_data = None
+        self._set_icon()
         self._build_ui()
+
+    def _set_icon(self):
+        try:
+            from .icon_data import ICON_BASE64
+            icon_bytes = base64.b64decode(ICON_BASE64)
+            self._icon_photo = tk.PhotoImage(data=icon_bytes)
+            self.iconphoto(True, self._icon_photo)
+        except Exception:
+            ico = Path(__file__).parent.parent / "icon.ico"
+            if ico.exists() and platform.system() == "Windows":
+                try:
+                    self.iconbitmap(str(ico))
+                except tk.TclError:
+                    pass
 
     def _build_ui(self):
         top = ttk.Frame(self, padding=10)
