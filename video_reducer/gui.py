@@ -17,6 +17,49 @@ from .state import (
     default_state, default_file_entry, load_state, save_state, recalc_stats,
 )
 
+THEMES = {
+    "light": {
+        "bg": "#f5f5f5",
+        "fg": "#1a1a1a",
+        "frame_bg": "#ffffff",
+        "entry_bg": "#ffffff",
+        "entry_fg": "#1a1a1a",
+        "tree_bg": "#ffffff",
+        "tree_fg": "#1a1a1a",
+        "tree_sel_bg": "#0078d4",
+        "tree_sel_fg": "#ffffff",
+        "tree_heading_bg": "#e0e0e0",
+        "tree_heading_fg": "#333333",
+        "btn_bg": "#e0e0e0",
+        "btn_fg": "#1a1a1a",
+        "accent": "#0078d4",
+        "muted": "#666666",
+        "border": "#cccccc",
+        "progress_bg": "#e0e0e0",
+        "progress_fg": "#0078d4",
+    },
+    "dark": {
+        "bg": "#1e1e2e",
+        "fg": "#cdd6f4",
+        "frame_bg": "#282840",
+        "entry_bg": "#313244",
+        "entry_fg": "#cdd6f4",
+        "tree_bg": "#1e1e2e",
+        "tree_fg": "#cdd6f4",
+        "tree_sel_bg": "#585b70",
+        "tree_sel_fg": "#ffffff",
+        "tree_heading_bg": "#313244",
+        "tree_heading_fg": "#bac2de",
+        "btn_bg": "#45475a",
+        "btn_fg": "#cdd6f4",
+        "accent": "#89b4fa",
+        "muted": "#6c7086",
+        "border": "#45475a",
+        "progress_bg": "#313244",
+        "progress_fg": "#a6e3a1",
+    },
+}
+
 
 def run_gui():
     if tk is None:
@@ -32,8 +75,10 @@ class VideoReducerGUI(tk.Tk):
         self.geometry("1000x700")
         self.minsize(800, 500)
         self.state_data = None
+        self.current_theme = "dark"
         self._set_icon()
         self._build_ui()
+        self._apply_theme(self.current_theme)
 
     def _set_icon(self):
         try:
@@ -49,6 +94,85 @@ class VideoReducerGUI(tk.Tk):
                 except tk.TclError:
                     pass
 
+    def _apply_theme(self, name):
+        self.current_theme = name
+        t = THEMES[name]
+
+        self.configure(bg=t["bg"])
+
+        style = ttk.Style(self)
+        style.theme_use("clam")
+
+        style.configure(".", background=t["bg"], foreground=t["fg"],
+                         fieldbackground=t["entry_bg"], bordercolor=t["border"],
+                         troughcolor=t["progress_bg"])
+
+        style.configure("TFrame", background=t["bg"])
+        style.configure("TLabel", background=t["bg"], foreground=t["fg"])
+        style.configure("Muted.TLabel", background=t["bg"], foreground=t["muted"])
+
+        style.configure("TLabelframe", background=t["bg"], foreground=t["fg"],
+                         bordercolor=t["border"])
+        style.configure("TLabelframe.Label", background=t["bg"], foreground=t["accent"])
+
+        style.configure("TEntry", fieldbackground=t["entry_bg"], foreground=t["entry_fg"],
+                         insertcolor=t["entry_fg"], bordercolor=t["border"])
+
+        style.configure("TButton", background=t["btn_bg"], foreground=t["btn_fg"],
+                         bordercolor=t["border"], padding=(8, 4))
+        style.map("TButton",
+                   background=[("active", t["accent"]), ("disabled", t["muted"])],
+                   foreground=[("active", "#ffffff"), ("disabled", t["bg"])])
+
+        style.configure("Accent.TButton", background=t["accent"], foreground="#ffffff",
+                         bordercolor=t["accent"], padding=(10, 5))
+        style.map("Accent.TButton",
+                   background=[("active", t["btn_bg"])],
+                   foreground=[("active", t["fg"])])
+
+        style.configure("TCheckbutton", background=t["bg"], foreground=t["fg"])
+        style.map("TCheckbutton", background=[("active", t["bg"])])
+
+        style.configure("TCombobox", fieldbackground=t["entry_bg"], foreground=t["entry_fg"],
+                         background=t["btn_bg"], bordercolor=t["border"],
+                         arrowcolor=t["fg"])
+        style.map("TCombobox", fieldbackground=[("readonly", t["entry_bg"])],
+                   foreground=[("readonly", t["entry_fg"])])
+        self.option_add("*TCombobox*Listbox.background", t["entry_bg"])
+        self.option_add("*TCombobox*Listbox.foreground", t["entry_fg"])
+        self.option_add("*TCombobox*Listbox.selectBackground", t["tree_sel_bg"])
+        self.option_add("*TCombobox*Listbox.selectForeground", t["tree_sel_fg"])
+
+        style.configure("Treeview",
+                         background=t["tree_bg"], foreground=t["tree_fg"],
+                         fieldbackground=t["tree_bg"], bordercolor=t["border"],
+                         rowheight=26)
+        style.configure("Treeview.Heading",
+                         background=t["tree_heading_bg"], foreground=t["tree_heading_fg"],
+                         bordercolor=t["border"], relief="flat")
+        style.map("Treeview",
+                   background=[("selected", t["tree_sel_bg"])],
+                   foreground=[("selected", t["tree_sel_fg"])])
+        style.map("Treeview.Heading",
+                   background=[("active", t["accent"])],
+                   foreground=[("active", "#ffffff")])
+
+        style.configure("TScrollbar", background=t["btn_bg"], troughcolor=t["bg"],
+                         bordercolor=t["border"], arrowcolor=t["fg"])
+
+        style.configure("Horizontal.TProgressbar",
+                         background=t["progress_fg"], troughcolor=t["progress_bg"],
+                         bordercolor=t["border"])
+
+        if hasattr(self, "btn_theme"):
+            self.btn_theme.config(text="Chiaro" if name == "dark" else "Scuro")
+        if hasattr(self, "preset_desc"):
+            self.preset_desc.config(style="Muted.TLabel")
+
+    def _toggle_theme(self):
+        new = "light" if self.current_theme == "dark" else "dark"
+        self._apply_theme(new)
+
     def _build_ui(self):
         top = ttk.Frame(self, padding=10)
         top.pack(fill=tk.X)
@@ -58,7 +182,10 @@ class VideoReducerGUI(tk.Tk):
         self.folder_entry = ttk.Entry(top, textvariable=self.folder_var, width=50)
         self.folder_entry.pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
         ttk.Button(top, text="Sfoglia...", command=self._browse).pack(side=tk.LEFT)
-        ttk.Button(top, text="Scansiona", command=self._scan).pack(side=tk.LEFT, padx=5)
+        ttk.Button(top, text="Scansiona", command=self._scan, style="Accent.TButton").pack(side=tk.LEFT, padx=5)
+
+        self.btn_theme = ttk.Button(top, text="Chiaro", command=self._toggle_theme)
+        self.btn_theme.pack(side=tk.RIGHT)
 
         opts = ttk.LabelFrame(self, text="Opzioni", padding=10)
         opts.pack(fill=tk.X, padx=10, pady=5)
@@ -73,7 +200,7 @@ class VideoReducerGUI(tk.Tk):
         preset_combo.pack(side=tk.LEFT, padx=5)
         preset_combo.bind("<<ComboboxSelected>>", self._update_preset_desc)
 
-        self.preset_desc = ttk.Label(row1, text=PRESETS["lossy"]["description"], foreground="gray")
+        self.preset_desc = ttk.Label(row1, text=PRESETS["lossy"]["description"], style="Muted.TLabel")
         self.preset_desc.pack(side=tk.LEFT, padx=10)
 
         row2 = ttk.Frame(opts)
@@ -102,7 +229,8 @@ class VideoReducerGUI(tk.Tk):
 
         btn_row = ttk.Frame(self, padding=(10, 5))
         btn_row.pack(fill=tk.X)
-        self.btn_convert = ttk.Button(btn_row, text="Converti selezionati", command=self._convert)
+        self.btn_convert = ttk.Button(btn_row, text="Converti selezionati",
+                                       command=self._convert, style="Accent.TButton")
         self.btn_convert.pack(side=tk.LEFT)
         ttk.Button(btn_row, text="Seleziona tutti", command=self._select_all).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_row, text="Deseleziona tutti", command=self._deselect_all).pack(side=tk.LEFT)
@@ -319,7 +447,7 @@ class VideoReducerGUI(tk.Tk):
                 messagebox.showinfo("Info", "Nessun file originale da eliminare")
                 return
             resp = messagebox.askyesno(
-                "⚠ Attenzione",
+                "Attenzione",
                 f"Nessun file è stato convertito!\n"
                 f"Ci sono {len(not_conv)} file non convertiti.\n\n"
                 f"Vuoi comunque eliminarli?\n"
