@@ -9,7 +9,7 @@ except ImportError:
 
 from .scanner import scan_folder
 from .converter import (
-    PRESETS, process_files, delete_originals, format_size,
+    PRESETS, process_files, delete_originals, format_size, set_low_priority,
 )
 from .state import (
     default_state, default_file_entry, load_state, save_state, recalc_stats,
@@ -72,9 +72,16 @@ class VideoReducerGUI(tk.Tk):
         ttk.Checkbutton(row2, text="Elimina originali dopo conversione",
                          variable=self.delete_var).pack(side=tk.LEFT, padx=20)
 
-        ttk.Label(row2, text="Soglia (MB):").pack(side=tk.LEFT, padx=(20, 0))
+        row3 = ttk.Frame(opts)
+        row3.pack(fill=tk.X, pady=5)
+
+        self.lowprio_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(row3, text="Lavora in background (priorità bassa CPU)",
+                         variable=self.lowprio_var).pack(side=tk.LEFT)
+
+        ttk.Label(row3, text="Soglia (MB):").pack(side=tk.LEFT, padx=(20, 0))
         self.threshold_var = tk.StringVar(value="500")
-        ttk.Entry(row2, textvariable=self.threshold_var, width=8).pack(side=tk.LEFT, padx=5)
+        ttk.Entry(row3, textvariable=self.threshold_var, width=8).pack(side=tk.LEFT, padx=5)
 
         btn_row = ttk.Frame(self, padding=(10, 5))
         btn_row.pack(fill=tk.X)
@@ -244,6 +251,7 @@ class VideoReducerGUI(tk.Tk):
 
         preset = self.preset_var.get()
         del_orig = self.delete_var.get()
+        set_low_priority(self.lowprio_var.get())
 
         self.btn_convert.config(state=tk.DISABLED)
         self.progress["maximum"] = len(keys)

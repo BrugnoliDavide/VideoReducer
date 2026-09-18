@@ -5,7 +5,7 @@ from pathlib import Path
 from . import __version__
 from .scanner import scan_folder
 from .converter import (
-    PRESETS, process_files, delete_originals, format_size,
+    PRESETS, process_files, delete_originals, format_size, set_low_priority,
 )
 from .state import (
     default_state, default_file_entry, load_state, save_state, recalc_stats,
@@ -46,6 +46,8 @@ def main():
     p_conv.add_argument("--files", nargs="+", help="Converti solo questi file specifici")
     p_conv.add_argument("--delete-originals", action="store_true",
                         help="Elimina gli originali dopo la conversione (con verifica)")
+    p_conv.add_argument("--low-priority", action="store_true",
+                        help="Esegui ffmpeg con priorità bassa (background, non avido di CPU)")
 
     # --- delete-originals ---
     p_del = sub.add_parser("delete-originals", help="Elimina i file originali già convertiti")
@@ -205,9 +207,14 @@ def cmd_convert(args):
         print("Nessun file da convertire.")
         return
 
+    if args.low_priority:
+        set_low_priority(True)
+
     preset = PRESETS[args.preset]
     print(f"\nConversione di {len(keys)} file con preset '{args.preset}'")
     print(f"  {preset['description']}")
+    if args.low_priority:
+        print("  Modalità background (priorità bassa)")
     if args.delete_originals:
         print("  ⚠ Gli originali verranno eliminati dopo la conversione")
     print()

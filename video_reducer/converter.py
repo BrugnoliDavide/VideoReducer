@@ -1,10 +1,29 @@
 import json
 import os
+import platform
 import subprocess
 import time
 from pathlib import Path
 
 from . import state as st_mod
+
+_low_priority = False
+
+
+def set_low_priority(enabled):
+    global _low_priority
+    _low_priority = enabled
+
+
+def _get_popen_kwargs():
+    kwargs = {}
+    if not _low_priority:
+        return kwargs
+    if platform.system() == "Windows":
+        kwargs["creationflags"] = subprocess.IDLE_PRIORITY_CLASS
+    else:
+        kwargs["preexec_fn"] = lambda: os.nice(19)
+    return kwargs
 
 PRESETS = {
     "lossy": {
@@ -79,6 +98,7 @@ def convert_file(filepath, preset_name, progress_cb=None):
     try:
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            **_get_popen_kwargs(),
         )
         _, stderr = proc.communicate()
         if proc.returncode != 0:
