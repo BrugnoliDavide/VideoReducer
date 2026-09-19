@@ -37,6 +37,10 @@ THEMES = {
         "border": "#cccccc",
         "progress_bg": "#e0e0e0",
         "progress_fg": "#0078d4",
+        "status_working_bg": "#fff3cd",
+        "status_working_fg": "#664d03",
+        "status_idle_bg": "#e0e0e0",
+        "status_idle_fg": "#333333",
     },
     "dark": {
         "bg": "#1e1e2e",
@@ -57,6 +61,10 @@ THEMES = {
         "border": "#45475a",
         "progress_bg": "#313244",
         "progress_fg": "#a6e3a1",
+        "status_working_bg": "#f9e2af",
+        "status_working_fg": "#1e1e2e",
+        "status_idle_bg": "#313244",
+        "status_idle_fg": "#cdd6f4",
     },
 }
 
@@ -78,6 +86,7 @@ class VideoReducerGUI(tk.Tk):
         self.current_theme = "dark"
         self._iid_to_path = {}
         self._path_to_iid = {}
+        self._working = False
         self._set_icon()
         self._build_ui()
         self._apply_theme(self.current_theme)
@@ -166,14 +175,48 @@ class VideoReducerGUI(tk.Tk):
                          background=t["progress_fg"], troughcolor=t["progress_bg"],
                          bordercolor=t["border"])
 
+        style.configure("StatusIdle.TLabel",
+                         background=t["status_idle_bg"], foreground=t["status_idle_fg"],
+                         padding=(8, 4), font=("", 9))
+        style.configure("StatusWorking.TLabel",
+                         background=t["status_working_bg"], foreground=t["status_working_fg"],
+                         padding=(8, 4), font=("", 9, "bold"))
+        style.configure("StatusBar.TFrame", background=t["status_idle_bg"])
+        style.configure("StatusBarWorking.TFrame", background=t["status_working_bg"])
+
         if hasattr(self, "btn_theme"):
             self.btn_theme.config(text="Chiaro" if name == "dark" else "Scuro")
         if hasattr(self, "preset_desc"):
             self.preset_desc.config(style="Muted.TLabel")
+        if hasattr(self, "status_frame"):
+            if self._working:
+                self.status_frame.config(style="StatusBarWorking.TFrame")
+            else:
+                self.status_frame.config(style="StatusBar.TFrame")
 
     def _toggle_theme(self):
         new = "light" if self.current_theme == "dark" else "dark"
         self._apply_theme(new)
+
+    def _set_working(self, working, message=""):
+        self._working = working
+        if working:
+            self.title(f"Video Reducer - {message}")
+            for btn in self._all_buttons:
+                btn.config(state=tk.DISABLED)
+            self.status_frame.config(style="StatusBarWorking.TFrame")
+            self.status_icon.config(text=">>", style="StatusWorking.TLabel")
+            self.stats_label.config(text=message, style="StatusWorking.TLabel")
+            self.progress_label.config(style="StatusWorking.TLabel")
+        else:
+            self.title("Video Reducer")
+            for btn in self._all_buttons:
+                btn.config(state=tk.NORMAL)
+            self.status_frame.config(style="StatusBar.TFrame")
+            self.status_icon.config(text="", style="StatusIdle.TLabel")
+            self.stats_label.config(style="StatusIdle.TLabel")
+            self.progress_label.config(text="", style="StatusIdle.TLabel")
+            self.progress["value"] = 0
 
     def _build_ui(self):
         top = ttk.Frame(self, padding=10)
@@ -183,8 +226,10 @@ class VideoReducerGUI(tk.Tk):
         self.folder_var = tk.StringVar()
         self.folder_entry = ttk.Entry(top, textvariable=self.folder_var, width=50)
         self.folder_entry.pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
-        ttk.Button(top, text="Sfoglia...", command=self._browse).pack(side=tk.LEFT)
-        ttk.Button(top, text="Scansiona", command=self._scan, style="Accent.TButton").pack(side=tk.LEFT, padx=5)
+        self.btn_browse = ttk.Button(top, text="Sfoglia...", command=self._browse)
+        self.btn_browse.pack(side=tk.LEFT)
+        self.btn_scan = ttk.Button(top, text="Scansiona", command=self._scan, style="Accent.TButton")
+        self.btn_scan.pack(side=tk.LEFT, padx=5)
 
         self.btn_theme = ttk.Button(top, text="Chiaro", command=self._toggle_theme)
         self.btn_theme.pack(side=tk.RIGHT)
@@ -234,8 +279,10 @@ class VideoReducerGUI(tk.Tk):
         self.btn_convert = ttk.Button(btn_row, text="Converti selezionati",
                                        command=self._convert, style="Accent.TButton")
         self.btn_convert.pack(side=tk.LEFT)
-        ttk.Button(btn_row, text="Seleziona tutti", command=self._select_all).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_row, text="Deseleziona tutti", command=self._deselect_all).pack(side=tk.LEFT)
+        self.btn_sel_all = ttk.Button(btn_row, text="Seleziona tutti", command=self._select_all)
+        self.btn_sel_all.pack(side=tk.LEFT, padx=5)
+        self.btn_desel_all = ttk.Button(btn_row, text="Deseleziona tutti", command=self._deselect_all)
+        self.btn_desel_all.pack(side=tk.LEFT)
         self.btn_del = ttk.Button(btn_row, text="Elimina originali convertiti",
                                    command=self._delete_originals)
         self.btn_del.pack(side=tk.LEFT, padx=20)
@@ -266,16 +313,25 @@ class VideoReducerGUI(tk.Tk):
 
         self.selected = set()
 
-        bottom = ttk.Frame(self, padding=10)
-        bottom.pack(fill=tk.X)
+        self.status_frame = ttk.Frame(self, style="StatusBar.TFrame", padding=(10, 6))
+        self.status_frame.pack(fill=tk.X, side=tk.BOTTOM)
 
-        self.stats_label = ttk.Label(bottom, text="Nessuna cartella caricata")
-        self.stats_label.pack(side=tk.LEFT)
+        self.status_icon = ttk.Label(self.status_frame, text="", style="StatusIdle.TLabel")
+        self.status_icon.pack(side=tk.LEFT)
 
-        self.progress = ttk.Progressbar(bottom, mode="determinate", length=200)
-        self.progress.pack(side=tk.RIGHT, padx=10)
-        self.progress_label = ttk.Label(bottom, text="")
-        self.progress_label.pack(side=tk.RIGHT)
+        self.stats_label = ttk.Label(self.status_frame, text="Nessuna cartella caricata",
+                                      style="StatusIdle.TLabel")
+        self.stats_label.pack(side=tk.LEFT, padx=(6, 0))
+
+        self.progress = ttk.Progressbar(self.status_frame, mode="determinate", length=250)
+        self.progress.pack(side=tk.RIGHT, padx=(10, 0))
+        self.progress_label = ttk.Label(self.status_frame, text="", style="StatusIdle.TLabel")
+        self.progress_label.pack(side=tk.RIGHT, padx=(0, 6))
+
+        self._all_buttons = [
+            self.btn_browse, self.btn_scan, self.btn_convert,
+            self.btn_sel_all, self.btn_desel_all, self.btn_del,
+        ]
 
     def _browse(self):
         folder = filedialog.askdirectory(title="Seleziona cartella video")
@@ -292,6 +348,8 @@ class VideoReducerGUI(tk.Tk):
         self.preset_desc.config(text=PRESETS.get(name, {}).get("description", ""))
 
     def _scan(self):
+        if self._working:
+            return
         folder = self.folder_var.get()
         if not folder or not Path(folder).is_dir():
             messagebox.showerror("Errore", "Seleziona una cartella valida")
@@ -302,8 +360,7 @@ class VideoReducerGUI(tk.Tk):
         except ValueError:
             threshold = 500
 
-        self.stats_label.config(text="Scansione in corso...")
-        self.update_idletasks()
+        self._set_working(True, "Scansione in corso...")
 
         def do_scan():
             state = load_state(folder)
@@ -325,13 +382,17 @@ class VideoReducerGUI(tk.Tk):
             recalc_stats(state)
             save_state(state)
             self.state_data = state
-            self.after(0, self._refresh_tree)
-            self.after(0, self._update_stats)
-            self.after(0, lambda: messagebox.showinfo(
-                "Scansione completata",
-                f"Trovati {len(state['files'])} file video ({new_count} nuovi)"))
+            self.after(0, self._scan_done, len(state["files"]), new_count)
 
         threading.Thread(target=do_scan, daemon=True).start()
+
+    def _scan_done(self, total, new_count):
+        self._set_working(False)
+        self._refresh_tree()
+        self._update_stats()
+        messagebox.showinfo(
+            "Scansione completata",
+            f"Trovati {total} file video ({new_count} nuovi)")
 
     def _refresh_tree(self):
         self.tree.delete(*self.tree.get_children())
@@ -398,6 +459,8 @@ class VideoReducerGUI(tk.Tk):
             self.tree.item(item, values=vals)
 
     def _convert(self):
+        if self._working:
+            return
         if not self.state_data:
             messagebox.showerror("Errore", "Scansiona prima una cartella")
             return
@@ -412,7 +475,7 @@ class VideoReducerGUI(tk.Tk):
         del_orig = self.delete_var.get()
         set_low_priority(self.lowprio_var.get())
 
-        self.btn_convert.config(state=tk.DISABLED)
+        self._set_working(True, f"Conversione di {len(keys)} file...")
         self.progress["maximum"] = len(keys)
         self.progress["value"] = 0
 
@@ -427,9 +490,12 @@ class VideoReducerGUI(tk.Tk):
 
     def _update_progress(self, current, total, fpath, msg):
         self.progress["value"] = current
-        self.progress_label.config(text=f"{current}/{total}")
+        pct = int(current / total * 100) if total else 0
+        self.progress_label.config(text=f"{current}/{total} ({pct}%)")
         name = Path(fpath).name
-        self.stats_label.config(text=f"{name}: {msg}")
+        status_text = f"[{current}/{total}] {name}: {msg}"
+        self.stats_label.config(text=status_text)
+        self.title(f"Video Reducer - {pct}% - {name}")
         entry = self.state_data["files"].get(fpath)
         iid = self._path_to_iid.get(fpath)
         if entry and iid and self.tree.exists(iid):
@@ -441,13 +507,15 @@ class VideoReducerGUI(tk.Tk):
             self.tree.item(iid, values=vals)
 
     def _conversion_done(self):
-        self.btn_convert.config(state=tk.NORMAL)
+        self._set_working(False)
         self._update_stats()
         self._refresh_tree()
         messagebox.showinfo("Completato", "Conversione terminata!\n"
                             f"Spazio risparmiato: {format_size(self.state_data['stats']['space_saved'])}")
 
     def _delete_originals(self):
+        if self._working:
+            return
         if not self.state_data:
             messagebox.showerror("Errore", "Scansiona prima una cartella")
             return
@@ -482,7 +550,16 @@ class VideoReducerGUI(tk.Tk):
                 return
             keys = converted
 
-        deleted, errors, skipped = delete_originals(self.state_data, keys)
+        self._set_working(True, f"Eliminazione di {len(keys)} originali (verifica integrita')...")
+
+        def do_delete():
+            d, e, s = delete_originals(self.state_data, keys)
+            self.after(0, lambda: self._delete_done(d, e, s))
+
+        threading.Thread(target=do_delete, daemon=True).start()
+
+    def _delete_done(self, deleted, errors, skipped):
+        self._set_working(False)
         self._refresh_tree()
         self._update_stats()
 
