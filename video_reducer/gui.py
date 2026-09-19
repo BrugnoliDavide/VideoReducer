@@ -76,6 +76,8 @@ class VideoReducerGUI(tk.Tk):
         self.minsize(800, 500)
         self.state_data = None
         self.current_theme = "dark"
+        self._iid_to_path = {}
+        self._path_to_iid = {}
         self._set_icon()
         self._build_ui()
         self._apply_theme(self.current_theme)
@@ -334,10 +336,13 @@ class VideoReducerGUI(tk.Tk):
     def _refresh_tree(self):
         self.tree.delete(*self.tree.get_children())
         self.selected.clear()
+        self._iid_to_path.clear()
+        self._path_to_iid.clear()
         if not self.state_data:
             return
 
         cat_filter = self.category_var.get()
+        idx = 0
         for fpath, entry in self.state_data["files"].items():
             if cat_filter != "all" and cat_filter not in entry["categories"]:
                 continue
@@ -345,41 +350,49 @@ class VideoReducerGUI(tk.Tk):
             status = entry["status"]
             if entry["original_deleted"]:
                 status += " [DEL]"
-            self.tree.insert("", tk.END, iid=fpath, values=(
+            iid = f"row_{idx}"
+            idx += 1
+            self._iid_to_path[iid] = fpath
+            self._path_to_iid[fpath] = iid
+            self.tree.insert("", tk.END, iid=iid, values=(
                 "☐", Path(fpath).name, format_size(entry["original_size"]),
                 entry["codec"], cats, status,
             ))
 
     def _toggle_selection(self, event):
-        region = self.tree.identify_region(event.x, event.y)
-        if region != "cell":
-            return
-        col = self.tree.identify_column(event.x)
         item = self.tree.identify_row(event.y)
-        if not item or col != "#1":
+        if not item:
             return
 
-        if item in self.selected:
-            self.selected.discard(item)
+        fpath = self._iid_to_path.get(item)
+        if not fpath:
+            return
+
+        if fpath in self.selected:
+            self.selected.discard(fpath)
             vals = list(self.tree.item(item, "values"))
             vals[0] = "☐"
             self.tree.item(item, values=vals)
         else:
-            self.selected.add(item)
+            self.selected.add(fpath)
             vals = list(self.tree.item(item, "values"))
             vals[0] = "☑"
             self.tree.item(item, values=vals)
 
     def _select_all(self):
         for item in self.tree.get_children():
-            self.selected.add(item)
+            fpath = self._iid_to_path.get(item)
+            if fpath:
+                self.selected.add(fpath)
             vals = list(self.tree.item(item, "values"))
             vals[0] = "☑"
             self.tree.item(item, values=vals)
 
     def _deselect_all(self):
         for item in self.tree.get_children():
-            self.selected.discard(item)
+            fpath = self._iid_to_path.get(item)
+            if fpath:
+                self.selected.discard(fpath)
             vals = list(self.tree.item(item, "values"))
             vals[0] = "☐"
             self.tree.item(item, values=vals)
@@ -389,7 +402,8 @@ class VideoReducerGUI(tk.Tk):
             messagebox.showerror("Errore", "Scansiona prima una cartella")
             return
 
-        keys = [k for k in self.selected if self.state_data["files"].get(k, {}).get("status") in ("pending", "error")]
+        keys = [fpath for fpath in self.selected
+                if self.state_data["files"].get(fpath, {}).get("status") in ("pending", "error")]
         if not keys:
             messagebox.showinfo("Info", "Nessun file selezionato (o tutti già convertiti)")
             return
@@ -417,13 +431,14 @@ class VideoReducerGUI(tk.Tk):
         name = Path(fpath).name
         self.stats_label.config(text=f"{name}: {msg}")
         entry = self.state_data["files"].get(fpath)
-        if entry and self.tree.exists(fpath):
+        iid = self._path_to_iid.get(fpath)
+        if entry and iid and self.tree.exists(iid):
             status = entry["status"]
             if entry["original_deleted"]:
                 status += " [DEL]"
-            vals = list(self.tree.item(fpath, "values"))
+            vals = list(self.tree.item(iid, "values"))
             vals[5] = status
-            self.tree.item(fpath, values=vals)
+            self.tree.item(iid, values=vals)
 
     def _conversion_done(self):
         self.btn_convert.config(state=tk.NORMAL)
