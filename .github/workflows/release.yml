@@ -1,0 +1,76 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: video-reducer-windows.exe
+            pyinstaller_args: --name video-reducer --icon icon.ico
+          - os: ubuntu-latest
+            artifact: video-reducer-linux
+            pyinstaller_args: --name video-reducer
+          - os: macos-latest
+            artifact: video-reducer-macos
+            pyinstaller_args: --name video-reducer
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pyinstaller
+
+      - name: Build binary
+        run: >
+          pyinstaller
+          --onefile
+          --console
+          ${{ matrix.pyinstaller_args }}
+          --add-data "video_reducer${{ runner.os == 'Windows' && ';' || ':' }}video_reducer"
+          run.py
+
+      - name: Rename artifact (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: mv dist/video-reducer dist/${{ matrix.artifact }}
+
+      - name: Rename artifact (Windows)
+        if: runner.os == 'Windows'
+        run: mv dist/video-reducer.exe dist/${{ matrix.artifact }}
+        shell: bash
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            video-reducer-windows.exe
+            video-reducer-linux
+            video-reducer-macos
+          generate_release_notes: true

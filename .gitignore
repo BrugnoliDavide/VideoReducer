@@ -3,4 +3,8 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+*.spec
 .video_reducer_state.json
+tools/
+insv_upscaler/
+insv_upscaler.bat
