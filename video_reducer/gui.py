@@ -87,6 +87,10 @@ class VideoReducerGUI(tk.Tk):
         self._iid_to_path = {}
         self._path_to_iid = {}
         self._working = False
+        self._sort_col = None
+        self._sort_reverse = False
+        self._pause_event = threading.Event()
+        self._stop_event = threading.Event()
         self._set_icon()
         self._build_ui()
         self._apply_theme(self.current_theme)
@@ -210,6 +214,7 @@ class VideoReducerGUI(tk.Tk):
             self.progress_label.config(style="StatusWorking.TLabel")
         else:
             self.title("Video Reducer")
+            self.conv_controls.pack_forget()
             for btn in self._all_buttons:
                 btn.config(state=tk.NORMAL)
             self.status_frame.config(style="StatusBar.TFrame")
@@ -255,9 +260,11 @@ class VideoReducerGUI(tk.Tk):
 
         ttk.Label(row2, text="Categoria:").pack(side=tk.LEFT)
         self.category_var = tk.StringVar(value="all")
-        ttk.Combobox(row2, textvariable=self.category_var,
-                      values=["all", "heavy_codec", "large_file", "high_bitrate", "not_efficient"],
-                      state="readonly", width=15).pack(side=tk.LEFT, padx=5)
+        cat_combo = ttk.Combobox(row2, textvariable=self.category_var,
+                                  values=["all", "heavy_codec", "large_file", "high_bitrate", "not_efficient"],
+                                  state="readonly", width=15)
+        cat_combo.pack(side=tk.LEFT, padx=5)
+        cat_combo.bind("<<ComboboxSelected>>", lambda _: self._refresh_tree())
 
         self.delete_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(row2, text="Elimina originali dopo conversione",
@@ -293,11 +300,16 @@ class VideoReducerGUI(tk.Tk):
         cols = ("sel", "nome", "dimensione", "codec", "categorie", "stato")
         self.tree = ttk.Treeview(tree_frame, columns=cols, show="headings", selectmode="extended")
         self.tree.heading("sel", text="✓")
-        self.tree.heading("nome", text="Nome file")
-        self.tree.heading("dimensione", text="Dimensione")
-        self.tree.heading("codec", text="Codec")
-        self.tree.heading("categorie", text="Categorie")
-        self.tree.heading("stato", text="Stato")
+        self.tree.heading("nome", text="Nome file",
+                          command=lambda: self._sort_column("nome"))
+        self.tree.heading("dimensione", text="Dimensione",
+                          command=lambda: self._sort_column("dimensione"))
+        self.tree.heading("codec", text="Codec",
+                          command=lambda: self._sort_column("codec"))
+        self.tree.heading("categorie", text="Categorie",
+                          command=lambda: self._sort_column("categorie"))
+        self.tree.heading("stato", text="Stato",
+                          command=lambda: self._sort_column("stato"))
         self.tree.column("sel", width=30, anchor=tk.CENTER)
         self.tree.column("nome", width=300)
         self.tree.column("dimensione", width=100, anchor=tk.E)
@@ -328,6 +340,16 @@ class VideoReducerGUI(tk.Tk):
         self.progress_label = ttk.Label(self.status_frame, text="", style="StatusIdle.TLabel")
         self.progress_label.pack(side=tk.RIGHT, padx=(0, 6))
 
+        self.conv_controls = ttk.Frame(self.status_frame, style="StatusBar.TFrame")
+        self.preset_indicator = ttk.Label(self.conv_controls, text="", style="StatusIdle.TLabel")
+        self.preset_indicator.pack(side=tk.LEFT, padx=(0, 8))
+        self.btn_pause = ttk.Button(self.conv_controls, text="⏸ Pausa",
+                                     command=self._toggle_pause, width=12)
+        self.btn_pause.pack(side=tk.LEFT, padx=2)
+        self.btn_stop = ttk.Button(self.conv_controls, text="⏹ Stop",
+                                    command=self._stop_conversion, width=8)
+        self.btn_stop.pack(side=tk.LEFT, padx=2)
+
         self._all_buttons = [
             self.btn_browse, self.btn_scan, self.btn_convert,
             self.btn_sel_all, self.btn_desel_all, self.btn_del,
@@ -346,6 +368,30 @@ class VideoReducerGUI(tk.Tk):
     def _update_preset_desc(self, _=None):
         name = self.preset_var.get()
         self.preset_desc.config(text=PRESETS.get(name, {}).get("description", ""))
+
+    def _sort_column(self, col):
+        if self._sort_col == col:
+            self._sort_reverse = not self._sort_reverse
+        else:
+            self._sort_col = col
+            self._sort_reverse = False
+        self._refresh_tree()
+
+    def _toggle_pause(self):
+        if self._pause_event.is_set():
+            self._pause_event.clear()
+            self.btn_pause.config(text="⏸ Pausa")
+            self.stats_label.config(text="Conversione ripresa...")
+        else:
+            self._pause_event.set()
+            self.btn_pause.config(text="▶ Riprendi")
+            self.stats_label.config(text="In pausa...")
+
+    def _stop_conversion(self):
+        if messagebox.askyesno("Conferma", "Interrompere la conversione in corso?"):
+            self._stop_event.set()
+            self._pause_event.clear()
+            self.stats_label.config(text="Interruzione in corso...")
 
     def _scan(self):
         if self._working:
@@ -395,6 +441,7 @@ class VideoReducerGUI(tk.Tk):
             f"Trovati {total} file video ({new_count} nuovi)")
 
     def _refresh_tree(self):
+        prev_selected = set(self.selected)
         self.tree.delete(*self.tree.get_children())
         self.selected.clear()
         self._iid_to_path.clear()
@@ -403,20 +450,47 @@ class VideoReducerGUI(tk.Tk):
             return
 
         cat_filter = self.category_var.get()
-        idx = 0
+        filtered = []
         for fpath, entry in self.state_data["files"].items():
             if cat_filter != "all" and cat_filter not in entry["categories"]:
                 continue
+            filtered.append((fpath, entry))
+
+        if self._sort_col:
+            sort_keys = {
+                "nome": lambda x: Path(x[0]).name.lower(),
+                "dimensione": lambda x: x[1]["original_size"],
+                "codec": lambda x: x[1]["codec"].lower(),
+                "categorie": lambda x: ", ".join(x[1]["categories"]).lower(),
+                "stato": lambda x: x[1]["status"],
+            }
+            key_func = sort_keys.get(self._sort_col)
+            if key_func:
+                filtered.sort(key=key_func, reverse=self._sort_reverse)
+
+        heading_texts = {
+            "sel": "✓", "nome": "Nome file", "dimensione": "Dimensione",
+            "codec": "Codec", "categorie": "Categorie", "stato": "Stato",
+        }
+        for col, text in heading_texts.items():
+            if col == self._sort_col:
+                text += " ▼" if self._sort_reverse else " ▲"
+            self.tree.heading(col, text=text)
+
+        for idx, (fpath, entry) in enumerate(filtered):
             cats = ", ".join(entry["categories"]) if entry["categories"] else "-"
             status = entry["status"]
             if entry["original_deleted"]:
                 status += " [DEL]"
             iid = f"row_{idx}"
-            idx += 1
             self._iid_to_path[iid] = fpath
             self._path_to_iid[fpath] = iid
+            is_sel = fpath in prev_selected
+            if is_sel:
+                self.selected.add(fpath)
             self.tree.insert("", tk.END, iid=iid, values=(
-                "☐", Path(fpath).name, format_size(entry["original_size"]),
+                "☑" if is_sel else "☐",
+                Path(fpath).name, format_size(entry["original_size"]),
                 entry["codec"], cats, status,
             ))
 
@@ -475,15 +549,24 @@ class VideoReducerGUI(tk.Tk):
         del_orig = self.delete_var.get()
         set_low_priority(self.lowprio_var.get())
 
+        self._stop_event.clear()
+        self._pause_event.clear()
+
         self._set_working(True, f"Conversione di {len(keys)} file...")
         self.progress["maximum"] = len(keys)
         self.progress["value"] = 0
+
+        self.conv_controls.config(style="StatusBarWorking.TFrame")
+        self.preset_indicator.config(text=f"Preset: {preset}", style="StatusWorking.TLabel")
+        self.btn_pause.config(text="⏸ Pausa")
+        self.conv_controls.pack(side=tk.LEFT, padx=(10, 0))
 
         def progress_cb(current, total, fpath, msg):
             self.after(0, lambda: self._update_progress(current, total, fpath, msg))
 
         def do_convert():
-            process_files(self.state_data, keys, preset, del_orig, progress_cb)
+            process_files(self.state_data, keys, preset, del_orig, progress_cb,
+                          stop_event=self._stop_event, pause_event=self._pause_event)
             self.after(0, self._conversion_done)
 
         threading.Thread(target=do_convert, daemon=True).start()
@@ -507,11 +590,18 @@ class VideoReducerGUI(tk.Tk):
             self.tree.item(iid, values=vals)
 
     def _conversion_done(self):
+        self.conv_controls.pack_forget()
         self._set_working(False)
         self._update_stats()
         self._refresh_tree()
-        messagebox.showinfo("Completato", "Conversione terminata!\n"
-                            f"Spazio risparmiato: {format_size(self.state_data['stats']['space_saved'])}")
+        stopped = self._stop_event.is_set()
+        self._stop_event.clear()
+        self._pause_event.clear()
+        if stopped:
+            messagebox.showinfo("Interrotto", "Conversione interrotta dall'utente.")
+        else:
+            messagebox.showinfo("Completato", "Conversione terminata!\n"
+                                f"Spazio risparmiato: {format_size(self.state_data['stats']['space_saved'])}")
 
     def _delete_originals(self):
         if self._working:

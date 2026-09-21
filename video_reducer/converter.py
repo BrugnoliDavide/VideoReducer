@@ -2,6 +2,7 @@ import json
 import os
 import platform
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -24,6 +25,35 @@ def _get_popen_kwargs():
     else:
         kwargs["preexec_fn"] = lambda: os.nice(19)
     return kwargs
+
+
+def _suspend_process(proc):
+    try:
+        if platform.system() == "Windows":
+            import ctypes
+            handle = ctypes.windll.kernel32.OpenProcess(0x0800, False, proc.pid)
+            ctypes.windll.ntdll.NtSuspendProcess(handle)
+            ctypes.windll.kernel32.CloseHandle(handle)
+        else:
+            import signal
+            os.kill(proc.pid, signal.SIGSTOP)
+    except Exception:
+        pass
+
+
+def _resume_process(proc):
+    try:
+        if platform.system() == "Windows":
+            import ctypes
+            handle = ctypes.windll.kernel32.OpenProcess(0x0800, False, proc.pid)
+            ctypes.windll.ntdll.NtResumeProcess(handle)
+            ctypes.windll.kernel32.CloseHandle(handle)
+        else:
+            import signal
+            os.kill(proc.pid, signal.SIGCONT)
+    except Exception:
+        pass
+
 
 PRESETS = {
     "lossy": {
@@ -77,7 +107,7 @@ def output_path_for(original, preset_name):
     return p.parent / new_name
 
 
-def convert_file(filepath, preset_name, progress_cb=None):
+def convert_file(filepath, preset_name, stop_event=None, pause_event=None):
     preset = PRESETS[preset_name]
     out = output_path_for(filepath, preset_name)
 
@@ -97,12 +127,54 @@ def convert_file(filepath, preset_name, progress_cb=None):
 
     try:
         proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
             **_get_popen_kwargs(),
         )
-        _, stderr = proc.communicate()
+
+        stderr_chunks = []
+        def drain_stderr():
+            try:
+                stderr_chunks.append(proc.stderr.read())
+            except Exception:
+                pass
+
+        reader = threading.Thread(target=drain_stderr, daemon=True)
+        reader.start()
+
+        while proc.poll() is None:
+            if stop_event and stop_event.is_set():
+                proc.kill()
+                proc.wait()
+                reader.join(timeout=2)
+                try:
+                    out.unlink()
+                except OSError:
+                    pass
+                return None, "Interrotto dall'utente"
+
+            if pause_event and pause_event.is_set():
+                _suspend_process(proc)
+                while pause_event.is_set():
+                    if stop_event and stop_event.is_set():
+                        _resume_process(proc)
+                        proc.kill()
+                        proc.wait()
+                        reader.join(timeout=2)
+                        try:
+                            out.unlink()
+                        except OSError:
+                            pass
+                        return None, "Interrotto dall'utente"
+                    time.sleep(0.2)
+                _resume_process(proc)
+
+            time.sleep(0.1)
+
+        reader.join(timeout=5)
+        stderr = b"".join(stderr_chunks).decode(errors="replace")
+
         if proc.returncode != 0:
-            return None, stderr.decode(errors="replace")
+            return None, stderr
         return str(out), None
     except FileNotFoundError:
         return None, "ffmpeg non trovato. Installare ffmpeg e assicurarsi che sia nel PATH."
@@ -145,9 +217,11 @@ def _probe_duration(filepath):
         return None
 
 
-def process_files(state, file_keys, preset_name, delete_originals=False, progress_cb=None):
+def process_files(state, file_keys, preset_name, delete_originals=False, progress_cb=None, stop_event=None, pause_event=None):
     total = len(file_keys)
     for i, fpath in enumerate(file_keys):
+        if stop_event and stop_event.is_set():
+            break
         entry = state["files"].get(fpath)
         if not entry:
             continue
@@ -168,7 +242,12 @@ def process_files(state, file_keys, preset_name, delete_originals=False, progres
         if progress_cb:
             progress_cb(i + 1, total, fpath, "conversione in corso...")
 
-        out, err = convert_file(fpath, preset_name)
+        out, err = convert_file(fpath, preset_name, stop_event=stop_event, pause_event=pause_event)
+        if stop_event and stop_event.is_set():
+            if entry["status"] == "converting":
+                entry["status"] = "pending"
+                st_mod.save_state(state)
+            break
         if out is None:
             entry["status"] = "error"
             entry["error"] = err
