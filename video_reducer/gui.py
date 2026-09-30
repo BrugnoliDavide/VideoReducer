@@ -75,6 +75,45 @@ THEMES = {
 }
 
 
+class _RoundedCard(tk.Canvas):
+    """Canvas with a rounded-rectangle border used as a section container."""
+
+    def __init__(self, parent, radius=10, pad=12, fill="#fff", outline="#ddd"):
+        super().__init__(parent, highlightthickness=0, bd=0, bg=parent.cget("bg"))
+        self._r = radius
+        self._fill = fill
+        self._outline = outline
+        self.inner = tk.Frame(self, bg=fill, padx=pad, pady=pad // 2 + 2)
+        self._wid = self.create_window(0, 0, window=self.inner, anchor="nw")
+        self.inner.bind("<Configure>", self._sync_height)
+        self.bind("<Configure>", self._paint)
+
+    def _sync_height(self, _=None):
+        self.update_idletasks()
+        self.configure(height=self.inner.winfo_reqheight())
+
+    def _paint(self, _=None):
+        w, h = self.winfo_width(), self.winfo_height()
+        self.delete("bg")
+        if w > 4 and h > 4:
+            r = self._r
+            x1, y1, x2, y2 = 1, 1, w - 1, h - 1
+            pts = [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r,
+                   x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2,
+                   x1, y2, x1, y2 - r, x1, y1 + r, x1, y1]
+            self.create_polygon(pts, smooth=True, fill=self._fill,
+                                outline=self._outline, width=1, tags="bg")
+            self.tag_lower("bg")
+        self.itemconfigure(self._wid, width=max(1, w))
+
+    def set_colors(self, fill, outline, canvas_bg):
+        self._fill = fill
+        self._outline = outline
+        self.configure(bg=canvas_bg)
+        self.inner.configure(bg=fill)
+        self._paint()
+
+
 def run_gui():
     if tk is None:
         raise ImportError("tkinter non disponibile")
@@ -213,6 +252,8 @@ class VideoReducerGUI(tk.Tk):
             self._draw_status_dot(self._status_state)
         if hasattr(self, "status_frame"):
             self.status_frame.config(style="StatusBar.TFrame")
+        if hasattr(self, "_opts_card"):
+            self._opts_card.set_colors(t["bg"], t["border"], t["bg"])
 
     def _toggle_theme(self):
         new = "light" if self.current_theme == "dark" else "dark"
@@ -262,8 +303,11 @@ class VideoReducerGUI(tk.Tk):
         self.btn_theme = ttk.Button(top, text="☼ Chiaro", command=self._toggle_theme)
         self.btn_theme.pack(side=tk.RIGHT)
 
-        opts = ttk.LabelFrame(self, text="Opzioni", padding=(12, 8))
-        opts.pack(fill=tk.X, padx=12, pady=(4, 2))
+        t = THEMES[self.current_theme]
+        self._opts_card = _RoundedCard(self, radius=10, pad=12,
+                                        fill=t["bg"], outline=t["border"])
+        self._opts_card.pack(fill=tk.X, padx=12, pady=(4, 4))
+        opts = self._opts_card.inner
 
         row1 = ttk.Frame(opts)
         row1.pack(fill=tk.X)
@@ -324,12 +368,11 @@ class VideoReducerGUI(tk.Tk):
         self.sel_count_label = ttk.Label(btn_row, text="", style="SelCount.TLabel")
         self.sel_count_label.pack(side=tk.LEFT, padx=(6, 0))
 
-        search_frame = ttk.Frame(self, padding=(12, 2, 12, 4))
-        search_frame.pack(fill=tk.X)
-        ttk.Label(search_frame, text="Cerca:", style="Muted.TLabel").pack(side=tk.LEFT)
         self.search_var = tk.StringVar()
-        self.search_entry = ttk.Entry(search_frame, textvariable=self.search_var, width=30)
-        self.search_entry.pack(side=tk.LEFT, padx=6)
+        self.search_entry = ttk.Entry(btn_row, textvariable=self.search_var, width=20)
+        self.search_entry.pack(side=tk.RIGHT)
+        ttk.Label(btn_row, text="Cerca:", style="Muted.TLabel").pack(side=tk.RIGHT,
+                                                                       padx=(0, 4))
         self.search_var.trace_add("write", lambda *_: self._refresh_tree())
 
         tree_frame = ttk.Frame(self)
@@ -403,6 +446,10 @@ class VideoReducerGUI(tk.Tk):
             existing = load_state(folder)
             if existing:
                 self.state_data = existing
+                last = existing.get("last_preset")
+                if last and last in PRESETS:
+                    self.preset_var.set(last)
+                    self._update_preset_desc()
                 self._refresh_tree()
                 self._update_stats()
 
@@ -483,6 +530,10 @@ class VideoReducerGUI(tk.Tk):
     def _scan_done(self, total, new_count):
         self._set_working(False)
         self._draw_status_dot("success")
+        last = self.state_data.get("last_preset")
+        if last and last in PRESETS:
+            self.preset_var.set(last)
+            self._update_preset_desc()
         self._refresh_tree()
         self._update_stats()
         messagebox.showinfo(
@@ -609,6 +660,9 @@ class VideoReducerGUI(tk.Tk):
         preset = self.preset_var.get()
         del_orig = self.delete_var.get()
         set_low_priority(self.lowprio_var.get())
+
+        self.state_data["last_preset"] = preset
+        save_state(self.state_data)
 
         self._stop_event.clear()
         self._pause_event.clear()
