@@ -12,6 +12,7 @@ except ImportError:
 from .scanner import scan_folder
 from .converter import (
     PRESETS, process_files, delete_originals, format_size, set_low_priority,
+    stop_current_conversion, pause_current_conversion, resume_current_conversion,
 )
 from .state import (
     default_state, default_file_entry, load_state, save_state, recalc_stats,
@@ -468,10 +469,12 @@ class VideoReducerGUI(tk.Tk):
     def _toggle_pause(self):
         if self._pause_event.is_set():
             self._pause_event.clear()
+            resume_current_conversion()
             self.btn_pause.config(text="⏸ Pausa")
             self.stats_label.config(text="Conversione ripresa…")
         else:
             self._pause_event.set()
+            pause_current_conversion()
             self.btn_pause.config(text="▶ Riprendi")
             self.stats_label.config(text="In pausa…")
 
@@ -479,6 +482,7 @@ class VideoReducerGUI(tk.Tk):
         if messagebox.askyesno("Conferma", "Interrompere la conversione in corso?"):
             self._stop_event.set()
             self._pause_event.clear()
+            stop_current_conversion()
             self.stats_label.config(text="Interruzione in corso…")
 
     def _update_sel_count(self):

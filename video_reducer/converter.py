@@ -9,6 +9,8 @@ from pathlib import Path
 from . import state as st_mod
 
 _low_priority = False
+_current_proc = None
+_current_proc_lock = threading.Lock()
 
 
 def set_low_priority(enabled):
@@ -107,7 +109,8 @@ def output_path_for(original, preset_name):
     return p.parent / new_name
 
 
-def convert_file(filepath, preset_name, stop_event=None, pause_event=None):
+def convert_file(filepath, preset_name):
+    global _current_proc
     preset = PRESETS[preset_name]
     out = output_path_for(filepath, preset_name)
 
@@ -130,54 +133,47 @@ def convert_file(filepath, preset_name, stop_event=None, pause_event=None):
             cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
             **_get_popen_kwargs(),
         )
+        with _current_proc_lock:
+            _current_proc = proc
 
-        stderr_chunks = []
-        def drain_stderr():
-            try:
-                stderr_chunks.append(proc.stderr.read())
-            except Exception:
-                pass
+        _, stderr = proc.communicate()
 
-        reader = threading.Thread(target=drain_stderr, daemon=True)
-        reader.start()
-
-        while proc.poll() is None:
-            if stop_event and stop_event.is_set():
-                proc.kill()
-                proc.wait()
-                reader.join(timeout=2)
-                try:
-                    out.unlink()
-                except OSError:
-                    pass
-                return None, "Interrotto dall'utente"
-
-            if pause_event and pause_event.is_set():
-                _suspend_process(proc)
-                while pause_event.is_set():
-                    if stop_event and stop_event.is_set():
-                        _resume_process(proc)
-                        proc.kill()
-                        proc.wait()
-                        reader.join(timeout=2)
-                        try:
-                            out.unlink()
-                        except OSError:
-                            pass
-                        return None, "Interrotto dall'utente"
-                    time.sleep(0.2)
-                _resume_process(proc)
-
-            time.sleep(0.1)
-
-        reader.join(timeout=5)
-        stderr = b"".join(stderr_chunks).decode(errors="replace")
+        with _current_proc_lock:
+            _current_proc = None
 
         if proc.returncode != 0:
-            return None, stderr
+            try:
+                out.unlink()
+            except OSError:
+                pass
+            return None, stderr.decode(errors="replace")
         return str(out), None
     except FileNotFoundError:
         return None, "ffmpeg non trovato. Installare ffmpeg e assicurarsi che sia nel PATH."
+
+
+def stop_current_conversion():
+    with _current_proc_lock:
+        proc = _current_proc
+    if proc:
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
+
+def pause_current_conversion():
+    with _current_proc_lock:
+        proc = _current_proc
+    if proc and proc.poll() is None:
+        _suspend_process(proc)
+
+
+def resume_current_conversion():
+    with _current_proc_lock:
+        proc = _current_proc
+    if proc and proc.poll() is None:
+        _resume_process(proc)
 
 
 def verify_integrity(original, converted):
@@ -242,7 +238,7 @@ def process_files(state, file_keys, preset_name, delete_originals=False, progres
         if progress_cb:
             progress_cb(i + 1, total, fpath, "conversione in corso...")
 
-        out, err = convert_file(fpath, preset_name, stop_event=stop_event, pause_event=pause_event)
+        out, err = convert_file(fpath, preset_name)
         if stop_event and stop_event.is_set():
             if entry["status"] == "converting":
                 entry["status"] = "pending"
